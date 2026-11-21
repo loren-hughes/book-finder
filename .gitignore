@@ -1,0 +1,8 @@
+*.csv
+.ample/
+.env
+.env.*
+.DS_Store
+supabase/.temp/
+.supabase/
+Book Finder Handoff.md
