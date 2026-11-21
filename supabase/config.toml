@@ -1,0 +1,26 @@
+# Book Finder Supabase Edge Functions config
+# Keeps verify_jwt = false because each function validates APP_ACCESS_KEY via ?k=
+
+[functions.search]
+verify_jwt = false
+
+[functions.library]
+verify_jwt = false
+
+[functions.recs]
+verify_jwt = false
+
+[functions.prices]
+verify_jwt = false
+
+[functions.goodreads]
+verify_jwt = false
+
+[functions.spotify]
+verify_jwt = false
+
+[functions.scan]
+verify_jwt = false
+
+[functions.ask]
+verify_jwt = false
