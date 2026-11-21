@@ -205,6 +205,7 @@ Deno.serve(async (req) => {
           suspendEnd: h.suspended?.endDate,
           actions: Array.isArray(h.actions) ? h.actions : undefined,
           pickup: h.pickupLocation?.name ?? h.pickupBranch,
+          pickupBy: h.pickupByDate || undefined,
         });
       }
     }

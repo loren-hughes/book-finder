@@ -193,7 +193,7 @@ if(libData){
 (libData.holds.items||[]).forEach(function(h){
 if(!(ids.indexOf(h.id)>-1||same(w.title,w.author,h.title,h.author)))return;
 var k=h.kind==="digital"?" (digital)":"";
-if(h.status==="READY_FOR_PICKUP")m.push(["Ready for pickup"+(h.pickup?" · "+h.pickup:""),"ready"]);
+if(h.status==="READY_FOR_PICKUP")m.push(["Ready for pickup"+(h.pickup?" · "+h.pickup:"")+(h.pickupBy?" · by "+dueTxt(h.pickupBy):""),"ready"]);
 else if(h.status==="IN_TRANSIT")m.push(["In transit to you","transit"]);
 else m.push(["On hold #"+h.position+k,"wait"])});
 (libData.checkedOut.items||[]).forEach(function(c){
@@ -474,7 +474,7 @@ var ready=hs.filter(function(h){return h.status==="READY_FOR_PICKUP"});
 var transit=hs.filter(function(h){return h.status==="IN_TRANSIT"});
 var waiting=hs.filter(function(h){return h.status!=="READY_FOR_PICKUP"&&h.status!=="IN_TRANSIT"}).sort(function(a,b){return (a.position||0)-(b.position||0)});
 function sec(t,items,fn){if(!items.length)return;o.appendChild(el("h2","",t+" ("+items.length+")"));items.forEach(function(x){o.appendChild(fn(x))})}
-sec("Ready for pickup",ready,function(h){return holdItem(h,[h.author,h.pickup].filter(Boolean).join(" · "),"Ready","ready")});
+sec("Ready for pickup",ready,function(h){return holdItem(h,[h.author,h.pickup,h.pickupBy?"Pick up by "+dueTxt(h.pickupBy):""].filter(Boolean).join(" · "),"Ready","ready")});
 sec("In transit",transit,function(h){return holdItem(h,h.author||"","In transit","transit")});
 sec("On hold",waiting,function(h){return holdItem(h,[h.author,h.kind].filter(Boolean).join(" · "),h.suspended?"Paused":"#"+h.position,"wait")});
 var co=d.checkedOut.items||[];
