@@ -114,7 +114,7 @@ async function libby(title: string, author: string) {
 
 async function mclPrint(title: string, author: string): Promise<MclResult | null> {
   try {
-    const u = `https://multcolib.bibliocommons.com/v2/search?query=${E((title + " " + author).trim())}&searchType=smart&locale=en-US&f_ISO_LANGUAGE=eng&f_FORMAT=BK`;
+    const u = `https://multcolib.bibliocommons.com/v2/search?query=${E((title + " " + author).trim())}&searchType=smart&locale=en-US&f_FORMAT=BK`;
     const r = await fetch(u, { headers: { "User-Agent": UA, Accept: "text/html" }, signal: AbortSignal.timeout(6000) });
     if (!r.ok) return null;
     const html = await r.text();

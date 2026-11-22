@@ -104,6 +104,36 @@ Deno.serve(async (req) => {
       return out({ ok: true, count: next.length });
     }
 
+    if (action === "add_wtr") {
+      const title = String(body.title ?? "").trim();
+      const author = String(body.author ?? "").trim();
+      if (!title) return out({ error: "title required" }, 400);
+      const wtrList = await getStored("to-read");
+      if (!wtrList.some((b) => sameBook(b, { title, author }))) {
+        wtrList.unshift({
+          id: "app_" + Date.now(),
+          title,
+          author,
+          year: body.year || undefined,
+          series: body.series || undefined,
+          cover: body.cover || undefined,
+          added: now.slice(0, 10),
+        });
+        await sb.from("source_results").upsert({ query_norm: "goodreads", source: "to-read", data: wtrList, fetched_at: now });
+      }
+      return out({ ok: true, count: wtrList.length });
+    }
+
+    if (action === "remove_wtr") {
+      const title = String(body.title ?? "").trim();
+      const author = String(body.author ?? "").trim();
+      if (!title) return out({ error: "title required" }, 400);
+      const wtrList = await getStored("to-read");
+      const next = wtrList.filter((b) => !sameBook(b, { title, author }));
+      await sb.from("source_results").upsert({ query_norm: "goodreads", source: "to-read", data: next, fetched_at: now });
+      return out({ ok: true, count: next.length });
+    }
+
     const shelf = String(body.shelf ?? url.searchParams.get("shelf") ?? "");
     if (!SHELVES.includes(shelf)) return out({ error: "bad shelf" }, 400);
     if (!Array.isArray(body.items)) return out({ error: "items array required" }, 400);

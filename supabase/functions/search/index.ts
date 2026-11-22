@@ -12,7 +12,7 @@ const TTL = 15 * 60 * 1000;
 const UA = "Mozilla/5.0 (compatible; BookFinder/1.0)";
 const E = encodeURIComponent;
 
-type R = { source: string; title: string; author?: string; format?: string; available?: boolean; owned?: boolean; holds?: number; waitDays?: number; url: string; note?: string; rank?: string; cover?: string; description?: string };
+type R = { source: string; title: string; author?: string; format?: string; available?: boolean; owned?: boolean; holds?: number; waitDays?: number; url: string; note?: string; rank?: string; cover?: string; description?: string; year?: number; series?: string };
 
 const out = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: H });
 
@@ -25,18 +25,25 @@ async function libby(q: string): Promise<R[]> {
   const j = await res.json();
   return (j.items ?? [])
     .filter((i: any) => !i.languages?.length || i.languages.some((l: any) => String(l.id ?? "").toLowerCase() === "en" || /english/i.test(String(l.name ?? ""))))
-    .map((i: any) => ({
-      source: "libby", title: i.title, author: i.firstCreatorName, format: i.type?.name,
-      owned: !!i.isOwned, available: !!i.isAvailable, holds: i.holdsCount,
-      waitDays: i.isAvailable ? undefined : i.estimatedWaitDays,
-      url: `https://multcolib.overdrive.com/media/${i.id}`,
-      cover: i.covers?.cover150Wide?.href ?? i.covers?.cover300Wide?.href,
-      description: clean(i.fullDescription ?? i.description),
-    }));
+    .map((i: any) => {
+      const ds = i.detailedSeries;
+      const series = ds?.seriesName ? (ds.readingOrder ? `${ds.seriesName} #${ds.readingOrder}` : ds.seriesName) : (i.series || undefined);
+      const yr = i.publishDate ? Number(String(i.publishDate).slice(0, 4)) : 0;
+      return {
+        source: "libby", title: i.title, author: i.firstCreatorName, format: i.type?.name,
+        owned: !!i.isOwned, available: !!i.isAvailable, holds: i.holdsCount,
+        waitDays: i.isAvailable ? undefined : i.estimatedWaitDays,
+        url: `https://multcolib.overdrive.com/media/${i.id}`,
+        cover: i.covers?.cover150Wide?.href ?? i.covers?.cover300Wide?.href,
+        description: clean(i.fullDescription ?? i.description),
+        year: yr > 1000 ? yr : undefined,
+        series,
+      };
+    });
 }
 
 const mclUrl = (q: string, f: string) =>
-  `https://multcolib.bibliocommons.com/v2/search?query=${E(q)}&searchType=smart&locale=en-US&f_ISO_LANGUAGE=eng&f_FORMAT=${f}`;
+  `https://multcolib.bibliocommons.com/v2/search?query=${E(q)}&searchType=smart&locale=en-US&f_FORMAT=${f}`;
 
 async function mcl(q: string, f: string): Promise<R[]> {
   const res = await fetch(mclUrl(q, f), { headers: { "User-Agent": UA, Accept: "text/html" }, signal: AbortSignal.timeout(8000) });
@@ -55,7 +62,7 @@ async function mcl(q: string, f: string): Promise<R[]> {
     const text = raw.replace(/<[^>]+>/g, "");
     const pick = (r: RegExp) => text.match(r) ?? raw.match(r);
     const a = pick(/availability for (.+?), ([^,]+?), (Available|All copies in use|Unavailable|Not available|Coming soon|On order|In transit|Held for you)/);
-    if (!a) continue;
+    if (!a || /[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF]/.test(a[1])) continue;
     const au = raw.match(/searchType=author[^>]*>\s*([^<]+?)\s*</);
     const h = text.match(/Holds:\s*(\d+)\s*on\s*(\d+)\s*copies/);
     items.push({
@@ -301,13 +308,16 @@ function usedLinks(title: string, author?: string) {
   ];
 }
 
-async function olCover(title: string, author?: string): Promise<string | undefined> {
+async function olMeta(title: string, author?: string): Promise<{ cover?: string; year?: number }> {
   try {
-    const u = `https://openlibrary.org/search.json?limit=1&fields=cover_i&title=${E(title)}${author ? `&author=${E(author)}` : ""}`;
-    const j = await (await fetch(u, { signal: AbortSignal.timeout(3000) })).json();
-    const id = j.docs?.[0]?.cover_i;
-    return id ? `https://covers.openlibrary.org/b/id/${id}-M.jpg` : undefined;
-  } catch (_) { return undefined; }
+    const u = `https://openlibrary.org/search.json?limit=1&fields=cover_i,first_publish_year&title=${E(title)}${author ? `&author=${E(author)}` : ""}`;
+    const j = await (await fetch(u, { signal: AbortSignal.timeout(2500) })).json();
+    const d = j.docs?.[0];
+    return {
+      cover: d?.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : undefined,
+      year: typeof d?.first_publish_year === "number" ? d.first_publish_year : undefined,
+    };
+  } catch (_) { return {}; }
 }
 
 const VALID_STATUSES = new Set(["looking", "borrow_now", "library_hold", "buy_used", "got_it"]);
@@ -361,7 +371,7 @@ Deno.serve(async (req) => {
   const errors: string[] = [];
   const guard = (p: Promise<R[]>) => p.catch((e) => { errors.push(String(e.message ?? e)); return [] as R[]; });
   const gather = (query: string) => {
-    const n = "en:" + query.toLowerCase();
+    const n = "en2:" + query.toLowerCase();
     return Promise.all([
       guard(cached(n, "libby", () => libby(query))),
       guard(cached(n, "spotify", () => spotify(query))),
@@ -399,11 +409,27 @@ Deno.serve(async (req) => {
 
   const qq = norm(usedQ);
   const qq2 = qq.split(" ").filter(Boolean);
+  const isCompanion = (title: string) =>
+    /\b(unofficial|guide|companion|recipes|cookbook|trivia|quiz|workbook|summary|study guide|fan guide|tribute guide|world of|encyclopedia|analysis)\b/i.test(title);
+  const tkey = (s?: string) => norm(s).replace(/^(the|a|an) /, "");
+  const coreTitle = (s?: string) => tkey(String(s ?? "").split(":")[0]);
+  let primaryAuthor = "";
+  for (const key of order) {
+    const w = map.get(key)!;
+    if (norm(w.title) === qq && w.author && !isCompanion(w.title)) {
+      primaryAuthor = surname(w.author);
+      break;
+    }
+  }
   const relevance = (w: { title: string; author?: string }) => {
     const n = norm(w.title), a = norm(w.author);
-    if (n === qq) return 0;
-    if (qq2.length && qq2.every((t) => a.includes(t))) return 1;
-    return n.includes(qq) || (n && qq.includes(n)) ? 1 : 2;
+    const comp = isCompanion(w.title) ? 10 : 0;
+    const sameAuth = primaryAuthor && surname(w.author) === primaryAuthor;
+    if (n === qq) return (comp ? 5 : 0) + (sameAuth ? 0 : 1);
+    if (sameAuth) return 1 + comp;
+    if (qq2.length && qq2.every((t) => a.includes(t))) return 2 + comp;
+    if (n.includes(qq)) return 3 + comp;
+    return 4 + comp;
   };
   const includeRead = !!url.searchParams.get("includeRead");
   let readList: { title?: string; author?: string }[] = [];
@@ -411,14 +437,13 @@ Deno.serve(async (req) => {
     const { data: gr } = await sb.from("source_results").select("data").eq("query_norm", "goodreads").eq("source", "read").maybeSingle();
     if (Array.isArray(gr?.data)) readList = gr.data;
   }
-  const tkey = (s?: string) => norm(s).replace(/^(the|a|an) /, "");
   const isRead = (w: { title: string; author?: string }) => {
     if (!readList.length) return false;
-    const x = tkey(w.title), s1 = surname(w.author);
+    const x = tkey(w.title), cx = coreTitle(w.title), s1 = surname(w.author);
     return readList.some((b) => {
-      const y = tkey(b.title);
+      const y = tkey(b.title), cy = coreTitle(b.title);
       if (!x || !y) return false;
-      if (x !== y && !x.startsWith(y) && !y.startsWith(x)) return false;
+      if (x !== y && (!cx || cx !== cy)) return false;
       const s2 = surname(b.author);
       return !s1 || !s2 || s1 === s2;
     });
@@ -433,22 +458,29 @@ Deno.serve(async (req) => {
     return true;
   }).slice(0, 8);
 
-  const works = keys.map(({ key }) => {
+  const works = await Promise.all(keys.map(async ({ key }) => {
     const w = map.get(key)!;
-    for (const s of spo) if (norm(s.title).includes(norm(w.title)) || norm(w.title).includes(norm(s.title))) w.formats.push(s);
+    for (const s of spo) {
+      const titleMatch = norm(s.title).includes(norm(w.title)) || norm(w.title).includes(norm(s.title));
+      const authorMatch = !s.author || !w.author || surname(s.author) === surname(w.author);
+      if (titleMatch && authorMatch) w.formats.push(s);
+    }
     const rank = (r: R) => r.source === "spotify" ? 2 : r.available ? 0 : r.owned ? 1 : 3;
     const formats = w.formats
       .map((r) => ({ ...r, rank: ["borrow_now", "hold", "spotify", "not_owned"][rank(r)] }))
       .sort((a, b) => rank(a) - rank(b) || (a.waitDays ?? 1e9) - (b.waitDays ?? 1e9));
     const borrowable = formats.some((f) => f.rank === "borrow_now");
     const status = borrowable ? "borrow_now" : formats.some((f) => f.rank === "hold") ? "library_hold" : "buy_used";
-    const cover = formats.find((f) => f.cover)?.cover;
+    const meta = await olMeta(w.title, w.author);
+    const cover = formats.find((f) => f.cover)?.cover ?? meta.cover;
+    const years = formats.map((f) => f.year).filter((y): y is number => !!y);
+    const year = meta.year ?? (years.length ? Math.min(...years) : undefined);
+    const series = formats.find((f) => f.series)?.series;
     const description = formats.find((f) => f.description)?.description;
-    return { title: w.title, author: w.author, cover, description, status, formats, used: borrowable ? null : usedLinks(w.title, w.author) };
-  });
+    return { title: w.title, author: w.author, year, series, cover, description, status, formats, used: borrowable ? null : usedLinks(w.title, w.author) };
+  }));
 
   const primary = works[0] ?? null;
-  if (primary && !primary.cover) primary.cover = await olCover(primary.title, primary.author);
   const status = primary?.status ?? "buy_used";
   const best = primary ? { title: primary.title, author: primary.author, cover: primary.cover, status, top: primary.formats[0] ?? null } : null;
   const used = primary ? primary.used : usedLinks(corrected?.to ?? q, corrected?.author);
