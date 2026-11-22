@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
     authUrl.searchParams.set("client_id", id);
     authUrl.searchParams.set("response_type", "code");
     authUrl.searchParams.set("redirect_uri", REDIRECT_URI);
-    authUrl.searchParams.set("scope", "user-library-modify");
+    authUrl.searchParams.set("scope", "user-library-modify user-library-read");
     authUrl.searchParams.set("state", state);
     authUrl.searchParams.set("show_dialog", "true");
     return Response.redirect(authUrl.toString(), 302);
@@ -134,22 +134,50 @@ Deno.serve(async (req) => {
     return out({ connected: !!tok?.refresh_token, redirectUri: REDIRECT_URI });
   }
 
+  if (action === "check") {
+    let id = String(url.searchParams.get("id") ?? "").trim();
+    const rawUrl = String(url.searchParams.get("url") ?? "");
+    const m = rawUrl.match(/\/(audiobook|show)\/([A-Za-z0-9]+)/);
+    const kind = m?.[1] ?? "audiobook";
+    if (!id && m) id = m[2];
+    if (!/^[A-Za-z0-9]+$/.test(id)) return out({ saved: false });
+    try {
+      const access = await freshAccessToken();
+      const uris = m ? `spotify:${kind}:${id}` : `spotify:audiobook:${id},spotify:show:${id}`;
+      const res = await fetch(`https://api.spotify.com/v1/me/library/contains?uris=${encodeURIComponent(uris)}`, {
+        headers: { Authorization: `Bearer ${access}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 401 || res.status === 403) return out({ saved: false, needsReauth: true });
+      if (!res.ok) return out({ saved: false });
+      const arr = await res.json();
+      return out({ saved: Array.isArray(arr) && arr.some(Boolean) });
+    } catch (_) {
+      return out({ saved: false });
+    }
+  }
+
   if (action === "save") {
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     let id = String(url.searchParams.get("id") ?? body.id ?? "").trim();
-    if (!id && (body.url || url.searchParams.get("url"))) {
-      const u = String(body.url ?? url.searchParams.get("url"));
-      id = u.match(/\/(?:audiobook|show)\/([A-Za-z0-9]+)/)?.[1] ?? "";
-    }
+    const rawUrl = String(body.url ?? url.searchParams.get("url") ?? "");
+    const m = rawUrl.match(/\/(audiobook|show)\/([A-Za-z0-9]+)/);
+    const kind = m?.[1] ?? "audiobook";
+    if (!id && m) id = m[2];
     if (!/^[A-Za-z0-9]+$/.test(id)) return out({ error: "valid audiobook id required" }, 400);
     try {
       const access = await freshAccessToken();
-      const res = await fetch(`https://api.spotify.com/v1/me/audiobooks?ids=${encodeURIComponent(id)}`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${access}` },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (res.ok || res.status === 200 || res.status === 204) return out({ ok: true, id });
+      const saveUri = async (u: string) =>
+        await fetch(`https://api.spotify.com/v1/me/library?uris=${encodeURIComponent(u)}`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${access}` },
+          signal: AbortSignal.timeout(10000),
+        });
+      let res = await saveUri(`spotify:${kind}:${id}`);
+      if (res.status >= 500 && !m) {
+        res = await saveUri(`spotify:show:${id}`);
+      }
+      if (res.ok || res.status === 200 || res.status === 204) return out({ ok: true, id, kind });
       const txt = await res.text();
       return out({ error: `spotify ${res.status}`, detail: txt.slice(0, 400) }, res.status);
     } catch (e) {

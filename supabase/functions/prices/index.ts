@@ -25,7 +25,10 @@ async function amazon(title: string, author: string) {
   const search = `https://www.amazon.com/s?k=${encodeURIComponent(q)}&i=stripbooks`;
   const res = await get(search);
   const html = await res.text();
-  if (res.status !== 200 || /captcha|Robot Check/i.test(html.slice(0, 5000))) throw new Error(`amazon blocked (${res.status})`);
+  if (res.status === 503 || res.status === 403 || res.status === 429 || /captcha|Robot Check/i.test(html.slice(0, 5000))) {
+    return { site: "Amazon", url: search, blocked: true };
+  }
+  if (res.status !== 200) throw new Error(`amazon ${res.status}`);
   const re = /<div[^>]*data-asin="([A-Z0-9]{10})"[^>]*data-component-type="s-search-result"[^>]*>/g;
   const hits: { asin: string; at: number }[] = [];
   let m: RegExpExecArray | null;
@@ -72,6 +75,50 @@ async function abebooks(title: string, author: string) {
   return { site: "AbeBooks", url: search, lowestUsed: used, lowestAny: any, matches: items.length };
 }
 
+async function ebay(title: string, author: string) {
+  const id = Deno.env.get("EBAY_CLIENT_ID");
+  const sec = Deno.env.get("EBAY_CLIENT_SECRET");
+  if (!id || !sec) return null;
+  const tr = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
+    method: "POST",
+    headers: { Authorization: "Basic " + btoa(`${id}:${sec}`), "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=client_credentials&scope=" + encodeURIComponent("https://api.ebay.com/oauth/api_scope"),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!tr.ok) throw new Error(`ebay token ${tr.status}`);
+  const tok = await tr.json();
+  const q = `${title} ${author}`.trim();
+  const search = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&_sop=15`;
+  const u = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&category_ids=267&filter=buyingOptions:%7BFIXED_PRICE%7D&sort=price&limit=12`;
+  const r = await fetch(u, {
+    headers: { Authorization: `Bearer ${tok.access_token}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_US" },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error(`ebay ${r.status}`);
+  const j = await r.json();
+  const want = norm(title);
+  const items: any[] = [];
+  for (const it of j.itemSummaries ?? []) {
+    if (!it?.title || !norm(it.title).includes(want)) continue;
+    const price = Number(it.price?.value);
+    if (!Number.isFinite(price)) continue;
+    const shipVal = it.shippingOptions?.[0]?.shippingCost?.value;
+    const ship = shipVal != null ? Number(shipVal) : 0;
+    items.push({
+      title: it.title,
+      price,
+      shipping: Number.isFinite(ship) ? ship : 0,
+      total: Math.round((price + (Number.isFinite(ship) ? ship : 0)) * 100) / 100,
+      condition: it.condition,
+      seller: it.seller?.username,
+      url: it.itemWebUrl || search,
+    });
+  }
+  const used = items.filter((x) => !/^brand new$/i.test(x.condition ?? "")).sort((a, b) => a.total - b.total)[0];
+  const any = [...items].sort((a, b) => a.total - b.total)[0];
+  return { site: "eBay", url: search, lowestUsed: used ?? any, matches: items.length };
+}
+
 async function cached(key: string, source: string, fn: () => Promise<any>) {
   const { data } = await sb.from("source_results").select("data,fetched_at").eq("query_norm", key).eq("source", source).maybeSingle();
   if (data && Date.now() - new Date(data.fetched_at).getTime() < TTL) return data.data;
@@ -92,6 +139,10 @@ Deno.serve(async (req) => {
   const key = "p:" + norm(`${title} ${author}`);
   const errors: string[] = [];
   const run = (source: string, fn: () => Promise<any>) => cached(key, source, fn).catch((e) => { errors.push(`${source}: ${(e as Error).message}`); return null; });
-  const [az, abe] = await Promise.all([run("price_amazon", () => amazon(title, author)), run("price_abebooks", () => abebooks(title, author))]);
-  return out({ title, author, sites: [abe, az].filter(Boolean), errors });
+  const [az, abe, eb] = await Promise.all([
+    run("price_amazon", () => amazon(title, author)),
+    run("price_abebooks", () => abebooks(title, author)),
+    run("price_ebay", () => ebay(title, author)),
+  ]);
+  return out({ title, author, sites: [abe, eb, az].filter(Boolean), errors });
 });
