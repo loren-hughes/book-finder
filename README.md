@@ -8,7 +8,8 @@ A **library-first** book discovery, availability, and hold-management web app bu
 - **Screenshot Scanner (`scan`)**: Upload, paste (`Cmd+V`), or drag-and-drop screenshots from Apple Photos / Instagram book videos to extract every book title & author using Gemini Vision and check availability for all of them.
 - **AI Book Assistant (`ask`)**: Describe what you're looking for in plain English (e.g., *"mixed media mosaic tile making"* or *"kids books with dragons"*) and get 8–10 real book picks ranked by live Multnomah + Libby availability.
 - **Personalized Recommendations (`recs`)**: Generates picks from your 4–5★ Goodreads books, library holds, background saved searches, and checkouts (with an **Exclude checkouts** toggle), checked against both Libby and Multnomah print.
-- **My Library (`library`)**: Syncs your checkouts and holds, lets you **Place**, **Suspend/Resume**, and **Cancel** print holds with a **Pickup branch** selector, and includes a magazine toggle.
+- **My Library (`library`)**: Syncs your checkouts and holds (with **Book / Ebook / Audiobook** labels and estimated hold wait times), lets you **Place**, **Suspend/Resume**, and **Cancel** print & digital holds with a **Pickup branch** selector, **Renew** checkouts, **Return** digital checkouts early, and toggle magazine issues.
+- **For Later (Library) (`library`)**: Syncs your full Multnomah County Library *For Later* shelf (paginated past 50 items) with live availability status and copy/hold counts, one-tap **Place hold** for print items, **Formats** lookup (Libby, Spotify, used prices), **ⓘ** descriptions, and **×** remove.
 - **Goodreads Lists (`goodreads`)**: Supports Goodreads RSS feeds or CSV import (`read`, `to-read`, `currently-reading`), with a **Want to Read** tab (full multi-source availability check per book) and an in-app **Read** list (`✓ Read` / `×`).
 - **Spotify Audiobooks (`spotify`)**: Optional OAuth flow to save audiobooks directly to your Spotify library.
 
@@ -41,10 +42,11 @@ In **Supabase Dashboard → Edge Functions → Secrets** (or `supabase secrets s
 | `GEMINI_API_KEY` | Optional | Enables **📷 Screenshot Scanner** (`scan`) and **Ask Book Assistant** (`ask`) |
 | `GOODREADS_RSS_URL` | Optional | Private Goodreads RSS link (or import your Goodreads CSV via `POST /goodreads`) |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Optional | Spotify Developer App credentials for audiobook search & `+ Save` |
+| `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` | Optional | eBay Developer App credentials for live used book prices via eBay Browse API |
 | `APP_URL` | Optional | Your hosted frontend URL (used by Spotify OAuth & `scan` redirects) |
 
 ### 4. Configure & Host the Frontend
-1. Open [`index.html`](index.html) and update `BASE` (line ~104) to your Supabase project URL:
+1. Open [`index.html`](index.html) and update `BASE` to your Supabase project URL:
    ```js
    var BASE="https://YOUR_PROJECT_REF.supabase.co/functions/v1/";
    ```
